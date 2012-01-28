@@ -1,16 +1,57 @@
 // Test with the epic VirtualSerialPortApp - http://code.google.com/p/macosxvirtualserialport/
 
 var SerialPort = require("serialport").SerialPort;
-var util = require("util"), repl = require("repl");
+var util = require("util"), repl = require("repl"), dateformat = require("dateformat");
+var fs = require("fs");
+
 
 var serial_port = new SerialPort("/dev/tty.SLAB_USBtoUART", {baudrate: 9600, parser: statusParser() });
 
 var last_data = null;
 
+var now = new Date();
+var file = dateformat(now, "yyyymmdd_HHMM") + "-roast.log";
+
+var f = fs.createWriteStream(file, { flags: "w+" });
+f.write("time,temp\n");
+
+var start;
+
+var lastReport = null;
+var readings = [];
+
+function roc(arr, tf) {
+  if(arr.length > 1) {
+    var ago = arr[Math.max(arr.length - (tf+1), 0)],
+        data = arr[arr.length-1].data,
+        now = arr[arr.length-1].time;
+    return (((data - ago.data) / (now - ago.time)) * 1000 * 60).toFixed(1);
+  } else {
+    return 0
+  }
+}
+
+interval = 2;
+
 serial_port.on("data", function (data) {
   //util.puts("here: "+data);
   //if(data.length === 1) util.puts("byte: " + data.readUInt8(0));
-  util.puts(data);
+  var now = new Date(), rate = "";
+  readings.push({ data: data, time: now });
+  if(readings.length > 1) {
+    rate = [ roc(readings, 1), 
+             roc(readings, 2), 
+             roc(readings, 5), 
+             roc(readings, 10),
+             roc(readings, 15)].join("\t");
+  }
+  
+  lastReport = { data: data, time: now };
+  var dur = (now - start) / 1000;
+  var min = Math.floor(dur / 60);
+  var sec = Math.floor(dur - min*60);
+  util.puts(min + "m" + sec + "s\t" + data + "F\t" + " " + rate);
+  f.write((now - start) / 1000.0 + "," + data + "F\n");
   last_data = data;
 });
 serial_port.on("error", function (msg) {
@@ -25,7 +66,7 @@ ctx.last = last;
 
 var timerHandle = null;
 ctx.poll = function() {
-    timerHandle = setInterval(status, 1000);
+    timerHandle = setInterval(status, interval * 1000);
 };
 
 ctx.stoppoll = function() {
@@ -66,8 +107,8 @@ function buildStatus(buffed) {
     var firstPair = valsFor(buffed[2]);
     var secondPair = valsFor(buffed[3]);
     
-    util.puts(" first: " + firstPair);
-    util.puts("second: " + secondPair);
+    //util.puts(" first: " + firstPair);
+    //util.puts("second: " + secondPair);
     
     
     if(firstPair.a === 11) {
@@ -96,20 +137,20 @@ function statusParser() {
         
         for(var i = 0; i < buffer.length; i++) {
             var val = buffer.readUInt8(i);
-            util.puts("handling " + val + " from " + i + " of " + buffer.length);
+            //util.puts("handling " + val + " from " + i + " of " + buffer.length);
         
             if(buff === null && val !== 2) { 
-                util.puts("not the magic: " + val);
+                //util.puts("not the magic: " + val);
                 continue;
             }
             if(buff === null && val === 2) {
-                util.puts("starting parse");
+                //util.puts("starting parse");
                 buff = [];
                 continue;
             }
             if(buff !== null && buff.length === 8 && val === 3) {
                 // we're done! emit.
-                util.puts("finishing parse");
+                //util.puts("finishing parse");
             
                 try { emitter.emit('data', buildStatus(buff)); }
                 finally { buff = null; }
@@ -117,7 +158,7 @@ function statusParser() {
                 continue;
             }
             if(buff !== null) {
-                util.puts("pushing " + val);
+                //util.puts("pushing " + val);
                 buff.push(val);
             }
         }
@@ -125,6 +166,8 @@ function statusParser() {
     
 }
 
+start = new Date();
+status();
 ctx.poll();
 
 //serial_port.close();
